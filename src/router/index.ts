@@ -21,7 +21,7 @@ const router = createRouter({
           children: [
             { path: '', component: ListStudents },
             { path: 'student/create', component: () => import('@/pages/students/CreateStudent.vue') },
-            { path: 'student/:id/edit', component: () => import('@/pages/students/EditStudent.vue') },
+            { path: 'student/:uuid/edit', component: () => import('@/pages/students/EditStudent.vue') },
           ]
         }
       ]

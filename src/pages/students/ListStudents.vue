@@ -19,12 +19,23 @@
   </v-container>
   <v-container fluid>
     <v-row>
-      <v-col>
+      <v-col cols="11">
         <v-text-field
-          label="Pressione enter para pesquisar"
+          v-model="search"
+          @change="handleSearch"
+          label="Pressione enter para pesquisar E-mail"
           append-inner-icon="mdi-magnify"
           variant="outlined">
         </v-text-field>
+      </v-col>
+      <v-col cols="auto">
+        <v-btn
+          variant="tonal"
+          color="blue-darken-1"
+          @click="handleResetSearch"
+          size="x-large">
+          <v-icon icon="mdi-restart"></v-icon>
+        </v-btn>
       </v-col>
     </v-row>
   </v-container>
@@ -32,34 +43,34 @@
     <v-row>
       <v-col cols="12">
         <v-table
-          height="50vh"
+          height="60vh"
           fixed-header
         >
           <thead>
             <tr>
               <th class="text-left">
-                ID do usuário
+                ID
               </th>
               <th class="text-left">
-                Nome
+                Name
               </th>
               <th class="text-left">
-                Sobrenome
+                Lastname
               </th>
               <th class="text-left">
-                E-mail
+                E-mail address
               </th>
               <th class="text-left">
-                Registro acadêmico (RA)
+                RA
               </th>
               <th class="text-left">
                 CPF
               </th>
               <th class="text-left">
-                Criado em
+                Created at
               </th>
               <th class="text-left">
-                Ações
+                Actions
               </th>
             </tr>
           </thead>
@@ -78,7 +89,7 @@
               <td>{{ student.lastname }}</td>
               <td>{{ student.email }}</td>
               <td>{{ student.ra }}</td>
-              <td>{{ student.document }}</td>
+              <td>{{ student.cpf }}</td>
               <td>{{ student.createdAt }}</td>
               <td>
                 <v-btn
@@ -106,27 +117,34 @@
             </tr>
           </tbody>
         </v-table>
-      </v-col>
-      <v-col class="mx-auto" cols="4">
+        <v-col class="mx-auto" cols="4">
         <v-pagination
-          @prev="() => console.log('Prev')"
-            @next="() => console.log('Next')"
-            :length="4">
+          v-model="pagination.currentPage"
+          @prev="handlePrevPage"
+          @next="handleNextPage"
+          v-on:last="pagination.lastPage"
+          :length="pagination.lastPage">
         </v-pagination>
+      </v-col>
       </v-col>
     </v-row>
   </v-container>
 </template>
 
 <script lang="ts" setup>
+import HttpStatus from '@/enums/http.status.enum';
+import { RequestParamsInterface } from '@/interfaces/request/request.params.interface';
 import StudentInterface from '@/interfaces/users/response/student.interface';
 import { deleteStudentByUuid, getStudentListPaginated } from '@/services/students.service';
+import { formatCPF } from '@/utils/cpf.util';
 import { format } from '@/utils/date.util';
-import { onMounted, ref } from 'vue';
+import { errorNotify, successNotify } from '@/utils/notify.util';
+import { onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 const router = useRouter();
 
+const search = ref('');
 const students = ref([] as StudentInterface[]);
 const pagination = ref({
   total: 2,
@@ -146,37 +164,150 @@ const handleDeleteDataByUuid = async (uuid: string) => {
     }
 
     const res = await deleteStudentByUuid(uuid);
-    students.value = students.value.filter((student: StudentInterface) => student.uuid !== uuid);
 
-  } catch (error) {
-    // Alert com a seguinte mensagem: "Não foi possível deletar o aluno"
+    if (res.status !== HttpStatus.OK) {
+      throw new Error('Ocorreu um erro ao remover usuário.')
+    }
+
+    students.value = students.value.filter((student: StudentInterface) => student.uuid !== uuid);
+    successNotify('Aluno removido com sucesso.');
+
+  } catch (error: any) {
+    errorNotify(error.message);
   }
 }
 
-const handleNextPage = () => console.log('Next page...');
+const handleNextPage = async () => {
+  try {
+    const res = await getStudentListPaginated({
+      page: pagination.value.currentPage,
+    });
 
-const handlePrevPage = () => console.log('Prev page...');
+    students.value = res.data.data;
+    pagination.value = res.data.pagination;
+
+    students.value = handleFormatStudentList(res.data.data);
+
+  } catch (error: any) {
+    errorNotify(error.message);
+  }
+}
+
+const handlePrevPage = async () => {
+  try {
+    const res = await getStudentListPaginated({
+      page: pagination.value.currentPage,
+  });
+
+    students.value = res.data.data;
+    pagination.value = res.data.pagination;
+
+    students.value = handleFormatStudentList(res.data.data);
+
+  } catch (error: any) {
+    errorNotify(error.message);
+  }
+}
+
+const handleFormatStudentList = (students: StudentInterface[]) => {
+  return students.map((student: StudentInterface) => {
+    student.cpf = formatCPF(student.cpf);
+    student.createdAt = format(student.createdAt);
+    return student;
+  });
+}
+
+const handleSearch = async (event: any) => {
+  try {
+    if (event.target.value == '') {
+      return;
+    }
+
+    const res = await handleStudentListByEmailPaginated({
+      email: event.target.value,
+      perPage: pagination.value.perPage,
+      page: pagination.value.currentPage,
+    });
+
+    students.value = handleFormatStudentList(res?.data.data);
+
+    pagination.value = res?.data.pagination;
+
+  } catch (error: any) {
+    errorNotify('Erro ao buscar lista de alunos.');
+  }
+}
+
+const handleResetSearch = async () => {
+  try {
+    if (!search.value) {
+      return;
+    }
+
+    search.value = '';
+    await handleStudentListPaginated();
+  } catch (error: any) {
+    errorNotify('Erro ao limpar campo de pesquisar.');
+  }
+}
+
+const handleStudentListPaginatedByPage = async (page: number) => {
+  try {
+    const { perPage } = pagination.value;
+
+    const res = await getStudentListPaginated({ page, perPage });
+
+    students.value = handleFormatStudentList(res.data.data);
+
+    pagination.value = res.data.pagination;
+  } catch (error: any) {
+    errorNotify('Erro ao buscar lista de alunos.');
+  }
+}
+
+const handleStudentListByEmailPaginated = async ({
+  perPage,
+  page,
+  email,
+}: RequestParamsInterface) => {
+  try {
+    const res = await getStudentListPaginated({
+      page,
+      perPage,
+      email,
+    });
+
+    students.value = handleFormatStudentList(res.data.data);
+
+    pagination.value = res.data.pagination;
+    return res;
+  } catch (error: any) {
+    errorNotify('Erro ao buscar lista de alunos.');
+  }
+}
 
 const handleStudentListPaginated = async () => {
   try {
     const { prevPage, perPage } = pagination.value;
     const page = prevPage === null ? 1 : prevPage;
 
-    const res = await getStudentListPaginated(page, perPage);
+    const res = await getStudentListPaginated({ page, perPage });
 
-    students.value = res.data.data.map((student: StudentInterface) => {
-      student.createdAt = format(student.createdAt);
-      return student;
-    });
+    students.value = handleFormatStudentList(res.data.data);
 
     pagination.value = res.data.pagination;
-  } catch (error) {
-    // Alert com a seguinte mensagem: "Não foi possível buscar lista de dados de alunos."
-
+    return res;
+  } catch (error: any) {
+    errorNotify('Erro ao buscar lista de alunos.');
   }
 }
 
 onMounted(async () => {
   await handleStudentListPaginated();
 });
+
+watch(() => pagination.value.currentPage, async (newCurrentPage: number) => {
+  await handleStudentListPaginatedByPage(newCurrentPage);
+});
+
 </script>
